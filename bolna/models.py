@@ -130,7 +130,7 @@ class MongoDBProviderConfig(BaseModel):
     index_name: Optional[str] = None
     llm_model: Optional[str] = "gpt-3.5-turbo"
     embedding_model: Optional[str] = "text-embedding-3-small"
-    embedding_dimensions: Optional[int] = 256
+    embedding_dimensions: Optional[int] = 256j
 
 
 class LanceDBProviderConfig(BaseModel):
