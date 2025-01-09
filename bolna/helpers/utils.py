@@ -246,7 +246,10 @@ def format_messages(messages, use_system_prompt=False):
         content = message['content']
 
         if use_system_prompt and role == 'system':
-            formatted_string += "system: " + content + "\n"
+            try:
+                formatted_string += "system: " + content + "\n"
+            except Exception as e:
+                a = 1
         if role == 'assistant':
             formatted_string += "assistant: " + content + "\n"
         elif role == 'user':
@@ -256,10 +259,12 @@ def format_messages(messages, use_system_prompt=False):
 
 
 def update_prompt_with_context(prompt, context_data):
-    if not context_data or not isinstance(context_data.get('recipient_data'), dict):
-        return prompt.format_map(DictWithMissing({}))
-    return prompt.format_map(DictWithMissing(context_data.get('recipient_data', {})))
-
+    try:
+        if not context_data or not isinstance(context_data.get('recipient_data'), dict):
+            return prompt.format_map(DictWithMissing({}))
+        return prompt.format_map(DictWithMissing(context_data.get('recipient_data', {})))
+    except Exception as e:
+        return prompt
 
 async def get_prompt_responses(assistant_id, local=False):
     filepath = f"{PREPROCESS_DIR}/{assistant_id}/conversation_details.json"
@@ -385,6 +390,7 @@ def merge_wav_bytes(wav_files_bytes):
     combined.export(buffer, format="wav")
     return buffer.getvalue()
 
+
 def calculate_audio_duration(size_bytes, sampling_rate, bit_depth = 16, channels = 1, format = "wav"):
     bytes_per_sample = (bit_depth / 8) * channels if format != 'mulaw' else 1
     total_samples = size_bytes / bytes_per_sample
@@ -419,6 +425,7 @@ Message type
 9. engine
 '''
 
+
 async def write_request_logs(message, run_id):
     component_details = [None, None, None, None, None]
     message_data = message.get('data', '')
@@ -426,22 +433,22 @@ async def write_request_logs(message, run_id):
         message_data = ''
 
     row = [message['time'], message["component"], message["direction"], message["leg_id"], message['sequence_id'], message['model']]
-    if message["component"] == "llm":
+    if message["component"] in ("llm", "llm_hangup"):
         component_details = [message_data, message.get('input_tokens', 0), message.get('output_tokens', 0), None, message.get('latency', None), message['cached'], None]
     elif message["component"] == "transcriber":
         component_details = [message_data, None, None, None, message.get('latency', None), False, message.get('is_final', False)]
     elif message["component"] == "synthesizer":
         component_details = [message_data, None, None, len(message_data), message.get('latency', None), message['cached'], None, message['engine']]
     elif message["component"] == "function_call":
-        component_details =  [message_data, None, None, None, message.get('latency', None), None, None, None]
-     
+        component_details = [message_data, None, None, None, message.get('latency', None), None, None, None]
+
     row = row + component_details
 
     header = "Time,Component,Direction,Leg ID,Sequence ID,Model,Data,Input Tokens,Output Tokens,Characters,Latency,Cached,Final Transcript,Engine\n"
     log_string = ','.join(['"' + str(item).replace('"', '""') + '"' if item is not None else '' for item in row]) + '\n'
-    log_dir = f"./logs/{run_id.split('#')[0]}"
+    log_dir = f"./logs"
     os.makedirs(log_dir, exist_ok=True)
-    log_file_path = f"{log_dir}/{run_id.split('#')[1]}.csv"
+    log_file_path = f"{log_dir}/{run_id}.csv"
     file_exists = os.path.exists(log_file_path)
 
     async with aiofiles.open(log_file_path, mode='a') as log_file:
@@ -451,7 +458,7 @@ async def write_request_logs(message, run_id):
             await log_file.write(log_string)
 
 
-async def save_audio_file_to_s3(conversation_recording, sampling_rate = 24000, assistant_id = None, run_id = None):
+async def save_audio_file_to_s3(conversation_recording, sampling_rate = 24000, assistant_id=None, run_id=None):
     last_frame_end_time = conversation_recording['output'][0]['start_time']
     logger.info(f"LENGTH OF OUTPUT AUDIO {len(conversation_recording['output'])}")
     initial_gap = (last_frame_end_time - conversation_recording["metadata"]["started"] ) *1000
@@ -497,7 +504,7 @@ async def save_audio_file_to_s3(conversation_recording, sampling_rate = 24000, a
 
     # Verify the stereo waveform shape is [2, M]
     assert stereo_waveform.shape[0] == 2, "Stereo waveform should have 2 channels."
-    key = f'{assistant_id + run_id.split("#")[1]}.wav'
+    key = f'{assistant_id + run_id}.wav'
 
     audio_buffer = io.BytesIO()
     torchaudio.save(audio_buffer, stereo_waveform, 24000, format="wav")
@@ -521,7 +528,7 @@ def get_file_names_in_directory(directory):
     return os.listdir(directory)
 
 
-def convert_to_request_log(message, meta_info, model, component = "transcriber", direction = 'response', is_cached = False, engine=None, run_id = None):
+def convert_to_request_log(message, meta_info, model, component="transcriber", direction='response', is_cached = False, engine=None, run_id=None):
     log = dict()
     log['direction'] = direction
     log['data'] = message
@@ -540,8 +547,9 @@ def convert_to_request_log(message, meta_info, model, component = "transcriber",
         if 'is_final' in meta_info and meta_info['is_final']:
             log['is_final'] = True
     if component == "function_call":
-        logger.info(f"Logging {message} {log['data']}")
         log['latency'] = None
+    if component == "llm-hangup":
+        log['latency'] = meta_info.get('llm_latency', None) if direction == "response" else None
     else:
         log['is_final'] = False #This is logged only for users to know final transcript from the transcriber
     log['engine'] = engine
@@ -561,9 +569,10 @@ async def run_in_seperate_thread(fun):
 
 async def process_task_cancellation(asyncio_task, task_name):
     if asyncio_task is not None:
-        asyncio_task.cancel()
         try:
+            asyncio_task.cancel()
             await asyncio_task
-            asyncio_task = None
         except asyncio.CancelledError:
-            logger.info("{} has been successfully cancelled".format(task_name))
+            logger.info(f"{task_name} has been successfully cancelled.")
+        except Exception as e:
+            logger.error(f"Error cancelling {task_name}: {e}")

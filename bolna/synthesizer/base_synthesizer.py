@@ -31,6 +31,12 @@ class BaseSynthesizer:
     async def monitor_connection(self):
         pass
 
+    async def cleanup(self):
+        pass
+
+    async def handle_interruption(self):
+        pass
+
     def text_chunker(self, text):
         """Split text into chunks, ensuring to not break sentences."""
         splitters = (".", ",", "?", "!", ";", ":", "—", "-", "(", ")", "[", "]", "}", " ")

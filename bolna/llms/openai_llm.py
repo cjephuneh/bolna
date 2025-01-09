@@ -63,7 +63,7 @@ class OpenAiLLM(BaseLLM):
         response_format = self.get_response_format(request_json)
 
         answer, buffer, resp, called_fun, i = "", "", "", "", 0
-        logger.info(f"request to open ai {messages} max tokens {self.max_tokens} ")
+
         model_args = self.model_args
         model_args["response_format"] = response_format
         model_args["messages"] = messages
@@ -97,7 +97,7 @@ class OpenAiLLM(BaseLLM):
 
                 if not self.gave_out_prefunction_call_message and not textual_response:
                     filler = PRE_FUNCTION_CALL_MESSAGE if not called_fun.startswith("transfer_call") else TRANSFERING_CALL_FILLER.get(self.language, DEFAULT_LANGUAGE_CODE)
-                    yield filler , True, latency, False
+                    yield filler, True, latency, False
                     self.gave_out_prefunction_call_message = True
 
                 if len(buffer) > 0:
@@ -145,7 +145,7 @@ class OpenAiLLM(BaseLLM):
                 #**resp
             }
         
-            all_required_keys = tools[i]["parameters"]["properties"].keys() and tools[i]["parameters"]["required"]
+            all_required_keys = tools[i]["parameters"]["properties"].keys() and tools[i]["parameters"].get("required", [])
             if tools[i].get("parameters", None) is not None and (all(key in resp for key in all_required_keys)):
                 logger.info(f"Function call parameters: {resp}")
                 convert_to_request_log(resp, meta_info, self.model, "llm", direction = "response", is_cached= False, run_id = self.run_id)
@@ -163,7 +163,6 @@ class OpenAiLLM(BaseLLM):
     
     async def generate(self, messages, request_json=False):
         response_format = self.get_response_format(request_json)
-        logger.info(f"request to open ai {messages}")
 
         completion = await self.async_client.chat.completions.create(model=self.model, temperature=0.0, messages=messages,
                                                                      stream=False, response_format=response_format)
@@ -177,7 +176,7 @@ class OpenAiLLM(BaseLLM):
         response_format = self.get_response_format(request_json)
 
         answer, buffer, resp, called_fun, api_params, i = "", "", "", "", "", 0
-        logger.info(f"request to open ai {message} max tokens {self.max_tokens} ")
+
         latency = False
         start_time = time.time()
         textual_response = False
@@ -196,7 +195,6 @@ class OpenAiLLM(BaseLLM):
         model_args["assistant_id"] = self.assistant_id
         model_args["stream"] = True
         model_args["response_format"] = response_format
-        logger.info(f"request to open ai with thread {thread_id} & asst. id {self.assistant_id}")
 
         await self.async_client.beta.threads.messages.create(thread_id=model_args["thread_id"], role="user", content=message[-1]['content'])
 
